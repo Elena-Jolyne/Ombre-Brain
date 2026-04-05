@@ -106,16 +106,27 @@ class BucketManager:
         arousal: float = 0.3,
         bucket_type: str = "dynamic",
         name: str = None,
+        pinned: bool = False,
+        protected: bool = False,
     ) -> str:
         """
         Create a new memory bucket, return bucket ID.
         创建一个新的记忆桶，返回桶 ID。
+
+        pinned/protected=True: bucket won't be merged, decayed, or have importance changed.
+        Importance is locked to 10 for pinned/protected buckets.
+        pinned/protected 桶不参与合并与衰减，importance 强制锁定为 10。
         """
         bucket_id = generate_bucket_id()
         bucket_name = sanitize_name(name) if name else bucket_id
         domain = domain or ["未分类"]
         tags = tags or []
         linked_content = self._apply_wikilinks(content, tags, domain, bucket_name)
+
+        # --- Pinned/protected buckets: lock importance to 10 ---
+        # --- 钉选/保护桶：importance 强制锁定为 10 ---
+        if pinned or protected:
+            importance = 10
 
         # --- Build YAML frontmatter metadata / 构建元数据 ---
         metadata = {
@@ -131,6 +142,10 @@ class BucketManager:
             "last_active": now_iso(),
             "activation_count": 1,
         }
+        if pinned:
+            metadata["pinned"] = True
+        if protected:
+            metadata["protected"] = True
 
         # --- Assemble Markdown file (frontmatter + body) ---
         # --- 组装 Markdown 文件 ---
@@ -160,6 +175,7 @@ class BucketManager:
 
         logger.info(
             f"Created bucket / 创建记忆桶: {bucket_id} ({bucket_name}) → {primary_domain}/"
+            + (" [PINNED]" if pinned else "") + (" [PROTECTED]" if protected else "")
         )
         return bucket_id
 
@@ -200,6 +216,12 @@ class BucketManager:
             logger.warning(f"Failed to load bucket for update / 加载桶失败: {file_path}: {e}")
             return False
 
+        # --- Pinned/protected buckets: lock importance to 10, ignore importance changes ---
+        # --- 钉选/保护桶：importance 不可修改，强制保持 10 ---
+        is_pinned = post.get("pinned", False) or post.get("protected", False)
+        if is_pinned:
+            kwargs.pop("importance", None)  # silently ignore importance update
+
         # --- Update only fields that were passed in / 只改传入的字段 ---
         if "content" in kwargs:
             next_tags = kwargs.get("tags", post.get("tags", []))
@@ -225,6 +247,10 @@ class BucketManager:
             post["name"] = sanitize_name(kwargs["name"])
         if "resolved" in kwargs:
             post["resolved"] = bool(kwargs["resolved"])
+        if "pinned" in kwargs:
+            post["pinned"] = bool(kwargs["pinned"])
+            if kwargs["pinned"]:
+                post["importance"] = 10  # pinned → lock importance to 10
 
         # --- Auto-refresh activation time / 自动刷新激活时间 ---
         post["last_active"] = now_iso()

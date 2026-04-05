@@ -4,6 +4,9 @@
 
 A long-term emotional memory system for Claude. Tags memories using Russell's valence/arousal coordinates, stores them as Obsidian-compatible Markdown, connects via MCP, and has a forgetting curve.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/P0lar1zzZ/Ombre-Brain)
+[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/deploy?repo=https://github.com/P0lar1zzZ/Ombre-Brain)
+
 ---
 
 ## 它是什么 / What is this
@@ -176,13 +179,25 @@ Sensitive config via env vars:
 
 ## 衰减公式 / Decay Formula
 
-$$Score = Importance \times activation\_count^{0.3} \times e^{-\lambda \times days} \times (base + arousal \times boost)$$
+$$final\_score = time\_weight \times base\_score$$
+
+$$base\_score = Importance \times activation\_count^{0.3} \times e^{-\lambda \times days} \times (base + arousal \times boost)$$
+
+时间系数（乘数，优先级最高）/ Time weight (multiplier, highest priority):
+
+| 距今天数 Days since active | 时间系数 Weight |
+|---|---|
+| 0–1 天 | 1.0 |
+| 第 2 天 | 0.9 |
+| 之后每天约降 10% | `max(0.3, 0.9 × e^{-0.2197 × (days-2)})` |
+| 7 天后稳定 | ≈ 0.3（不归零）|
 
 - `importance`: 1-10，记忆重要性 / memory importance
 - `activation_count`: 被检索的次数，越常被想起衰减越慢 / retrieval count; more recalls = slower decay
 - `days`: 距上次激活的天数 / days since last activation
 - `arousal`: 唤醒度，越强烈的记忆越难忘 / arousal; intense memories are harder to forget
 - 已解决的记忆权重降到 5%，沉底等被关键词唤醒 / resolved memories drop to 5%, sink until keyword-triggered
+- `pinned=true` 的桶：不衰减、不合并、importance 锁定 10 / `pinned` buckets: never decay, never merge, importance locked at 10
 
 ## 给 Claude 的使用指南 / Usage Guide for Claude
 
@@ -199,6 +214,43 @@ $$Score = Importance \times activation\_count^{0.3} \times e^{-\lambda \times da
 | `reclassify_domains.py` | 基于关键词重分类 / Reclassify by keywords |
 | `reclassify_api.py` | 用 API 重打标未分类桶 / Re-tag uncategorized buckets via API |
 | `test_smoke.py` | 冒烟测试 / Smoke test |
+
+## 一键部署 / One-click Deploy
+
+### Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/P0lar1zzZ/Ombre-Brain)
+
+项目根目录已包含 `render.yaml`，点击按钮后：
+1. 在 Render dashboard → **Environment** 里设置 `OMBRE_API_KEY`
+2. Render 会自动挂载持久化磁盘到 `/opt/render/project/src/buckets`
+
+`render.yaml` is included. After clicking the button:
+1. Set `OMBRE_API_KEY` in Render dashboard → **Environment**
+2. A persistent disk is auto-mounted at `/opt/render/project/src/buckets`
+
+### Zeabur
+
+[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/deploy?repo=https://github.com/P0lar1zzZ/Ombre-Brain)
+
+项目根目录已包含 `zeabur.json`，点击按钮后：
+1. 在 Zeabur 控制台设置环境变量 `OMBRE_API_KEY`
+2. Volume `ombre-buckets` 会挂载到 `/app/buckets`
+
+`zeabur.json` is included. After clicking:
+1. Set `OMBRE_API_KEY` in the Zeabur console  
+2. Volume `ombre-buckets` mounts at `/app/buckets`
+
+### Session Start Hook（自动 breath）
+
+部署后，如果你使用 Claude Code，可以在项目内激活自动浮现 hook：
+`.claude/settings.json` 已配置好 `SessionStart` hook，每次新会话或恢复会话时自动触发 `breath`，把最高权重未解决记忆推入上下文。
+
+**仅在远程 HTTP 模式下有效**（`OMBRE_TRANSPORT=streamable-http`）。本地 stdio 模式下 hook 会安静退出，不影响正常使用。
+
+可以通过 `OMBRE_HOOK_URL` 环境变量指定服务器地址（默认 `http://localhost:8000`），或者设置 `OMBRE_HOOK_SKIP=1` 临时禁用。
+
+If using Claude Code, `.claude/settings.json` configures a `SessionStart` hook that auto-calls `breath` on each new or resumed session, surfacing your highest-weight unresolved memories as context. Only active in remote HTTP mode. Set `OMBRE_HOOK_SKIP=1` to disable temporarily.
 
 ## License
 

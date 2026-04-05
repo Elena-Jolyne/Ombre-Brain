@@ -117,20 +117,23 @@ async def _merge_or_create(
 
     if existing and existing[0].get("score", 0) > config.get("merge_threshold", 75):
         bucket = existing[0]
-        try:
-            merged = await dehydrator.merge(bucket["content"], content)
-            await bucket_mgr.update(
-                bucket["id"],
-                content=merged,
-                tags=list(set(bucket["metadata"].get("tags", []) + tags)),
-                importance=max(bucket["metadata"].get("importance", 5), importance),
-                domain=list(set(bucket["metadata"].get("domain", []) + domain)),
-                valence=valence,
-                arousal=arousal,
-            )
-            return bucket["metadata"].get("name", bucket["id"]), True
-        except Exception as e:
-            logger.warning(f"Merge failed, creating new / 合并失败，新建: {e}")
+        # --- Never merge into pinned/protected buckets ---
+        # --- 不合并到钉选/保护桶 ---
+        if not (bucket["metadata"].get("pinned") or bucket["metadata"].get("protected")):
+            try:
+                merged = await dehydrator.merge(bucket["content"], content)
+                await bucket_mgr.update(
+                    bucket["id"],
+                    content=merged,
+                    tags=list(set(bucket["metadata"].get("tags", []) + tags)),
+                    importance=max(bucket["metadata"].get("importance", 5), importance),
+                    domain=list(set(bucket["metadata"].get("domain", []) + domain)),
+                    valence=valence,
+                    arousal=arousal,
+                )
+                return bucket["metadata"].get("name", bucket["id"]), True
+            except Exception as e:
+                logger.warning(f"Merge failed, creating new / 合并失败，新建: {e}")
 
     bucket_id = await bucket_mgr.create(
         content=content,
@@ -177,6 +180,8 @@ async def breath(
             b for b in all_buckets
             if not b["metadata"].get("resolved", False)
             and b["metadata"].get("type") != "permanent"
+            and not b["metadata"].get("pinned", False)
+            and not b["metadata"].get("protected", False)
         ]
         if not unresolved:
             return "权重池平静，没有需要处理的记忆。"
@@ -264,8 +269,9 @@ async def hold(
     content: str,
     tags: str = "",
     importance: int = 5,
+    pinned: bool = False,
 ) -> str:
-    """存储单条记忆。自动打标+合并相似桶。tags 逗号分隔，importance 1-10。"""
+    """存储单条记忆。自动打标+合并相似桶。tags 逗号分隔，importance 1-10。pinned=True 创建永久钉选桶（不衰减、不合并、importance 锁定10）。"""
     await decay_engine.ensure_started()
 
     # --- Input validation / 输入校验 ---
@@ -292,6 +298,24 @@ async def hold(
     suggested_name = analysis.get("suggested_name", "")
 
     all_tags = list(dict.fromkeys(auto_tags + extra_tags))
+
+    # --- Pinned buckets bypass merge and are created directly ---
+    # --- 钉选桶跳过合并，直接新建 ---
+    if pinned:
+        bucket_id = await bucket_mgr.create(
+            content=content,
+            tags=all_tags,
+            importance=10,
+            domain=domain,
+            valence=valence,
+            arousal=arousal,
+            name=suggested_name or None,
+            pinned=True,
+        )
+        return (
+            f"已创建钉选记忆桶（永久保护）: {bucket_id}\n"
+            f"主题域: {', '.join(domain)} | 情感: V{valence:.1f}/A{arousal:.1f} | 标签: {', '.join(all_tags)}"
+        )
 
     # --- Step 2: merge or create / 合并或新建 ---
     result_name, is_merged = await _merge_or_create(
@@ -392,9 +416,10 @@ async def trace(
     importance: int = -1,
     tags: str = "",
     resolved: int = -1,
+    pinned: int = -1,
     delete: bool = False,
 ) -> str:
-    """修改记忆元数据。resolved=1 标记已解决（桶权重骤降沉底），resolved=0 重新激活，delete=True 删除桶。其余字段只传需改的，-1 或空串表示不改。"""
+    """修改记忆元数据。resolved=1 标记已解决（桶权重骤降沉底），resolved=0 重新激活，pinned=1 钉选为永久核心桶（不衰减不合并importance锁10），pinned=0 取消钉选，delete=True 删除桶。其余字段只传需改的，-1 或空串表示不改。"""
 
     if not bucket_id or not bucket_id.strip():
         return "请提供有效的 bucket_id。"
@@ -424,6 +449,10 @@ async def trace(
         updates["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
     if resolved in (0, 1):
         updates["resolved"] = bool(resolved)
+    if pinned in (0, 1):
+        updates["pinned"] = bool(pinned)
+        if pinned == 1:
+            updates["importance"] = 10  # pinned → lock importance
 
     if not updates:
         return "没有任何字段需要修改。"
@@ -476,7 +505,9 @@ async def pulse(include_archive: bool = False) -> str:
     lines = []
     for b in buckets:
         meta = b.get("metadata", {})
-        if meta.get("type") == "permanent":
+        if meta.get("pinned") or meta.get("protected"):
+            icon = "📌"
+        elif meta.get("type") == "permanent":
             icon = "📦"
         elif meta.get("type") == "archived":
             icon = "🗄️"

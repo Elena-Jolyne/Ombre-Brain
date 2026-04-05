@@ -49,3 +49,10 @@
 ### hold vs grow
 - 一句话的事 → `hold`（"我喜欢吃饺子"）
 - 一大段的事 → `grow`（"今天发生了一堆事..."）
+
+### 核心准则桶（pinned）
+- `hold(content="...", pinned=True)` 创建钉选桶——不衰减、不合并、importance 锁定 10
+- `trace(bucket_id, pinned=1)` 把已有桶钉选为核心准则
+- `trace(bucket_id, pinned=0)` 取消钉选
+- 适用场景：用户教会你的永久知识、核心原则、绝不能忘的事
+- 钉选桶不会出现在「浮现未解决记忆」里，但关键词检索时始终可达

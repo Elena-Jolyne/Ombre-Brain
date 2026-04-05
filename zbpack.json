@@ -1,0 +1,27 @@
+{
+  "name": "ombre-brain",
+  "description": "Long-term emotional memory system for Claude",
+  "build": {
+    "builder": "dockerfile"
+  },
+  "run": {
+    "command": "python server.py"
+  },
+  "ports": [
+    {
+      "port": 8000,
+      "protocol": "HTTP"
+    }
+  ],
+  "volumes": [
+    {
+      "name": "ombre-buckets",
+      "mountPath": "/app/buckets"
+    }
+  ],
+  "env": {
+    "OMBRE_TRANSPORT": "streamable-http",
+    "OMBRE_API_KEY": "${OMBRE_API_KEY}",
+    "OMBRE_BUCKETS_DIR": "/app/buckets"
+  }
+}

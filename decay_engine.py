@@ -69,15 +69,43 @@ class DecayEngine:
     # 得分越高 = 记忆越鲜活，低于阈值则归档
     # Permanent buckets never decay / 固化桶永远不衰减
     # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # Time weight: 0-1d→1.0, day2→0.9, then ~10%/day, floor 0.3
+    # 时间系数：0-1天=1.0，第2天=0.9，之后每天约降10%，7天后稳定在0.3
+    # ---------------------------------------------------------
+    @staticmethod
+    def _calc_time_weight(days_since: float) -> float:
+        """
+        Piecewise time weight multiplier (multiplies base_score).
+        分段式时间权重系数，作为 final_score 的乘数。
+        """
+        if days_since <= 1.0:
+            return 1.0
+        elif days_since <= 2.0:
+            # Linear interpolation: 1.0→0.9 over [1,2]
+            return 1.0 - 0.1 * (days_since - 1.0)
+        else:
+            # Exponential decay from 0.9, floor at 0.3
+            # k = ln(3)/5 ≈ 0.2197 so that at day 7 (5 days past day 2) → 0.3
+            raw = 0.9 * math.exp(-0.2197 * (days_since - 2.0))
+            return max(0.3, raw)
+
     def calculate_score(self, metadata: dict) -> float:
         """
         Calculate current activity score for a memory bucket.
         计算一个记忆桶的当前活跃度得分。
 
-        Formula: Score = Importance × (act_count^0.3) × e^(-λ×days) × (base + arousal×boost)
+        Formula: final_score = time_weight × base_score
+          base_score = Importance × (act_count^0.3) × e^(-λ×days) × (base + arousal×boost)
+          time_weight is the outer multiplier, takes priority over emotion factors.
         """
         if not isinstance(metadata, dict):
             return 0.0
+
+        # --- Pinned/protected buckets: never decay, importance locked to 10 ---
+        # --- 固化桶（pinned/protected）：永不衰减，importance 锁定为 10 ---
+        if metadata.get("pinned") or metadata.get("protected"):
+            return 999.0
 
         # --- Permanent buckets never decay / 固化桶永不衰减 ---
         if metadata.get("type") == "permanent":
@@ -104,13 +132,21 @@ class DecayEngine:
             arousal = 0.3
         emotion_weight = self.emotion_base + arousal * self.arousal_boost
 
-        # --- Apply decay formula / 套入衰减公式 ---
-        score = (
+        # --- Time weight (outer multiplier, highest priority) ---
+        # --- 时间权重（外层乘数，优先级最高）---
+        time_weight = self._calc_time_weight(days_since)
+
+        # --- Base score = Importance × act_count^0.3 × e^(-λ×days) × emotion ---
+        # --- 基础得分 ---
+        base_score = (
             importance
             * (activation_count ** 0.3)
             * math.exp(-self.decay_lambda * days_since)
             * emotion_weight
         )
+
+        # --- final_score = time_weight × base_score ---
+        score = time_weight * base_score
 
         # --- Weight pool modifiers / 权重池修正因子 ---
         # Resolved events drop to 5%, sink to bottom awaiting keyword reactivation
@@ -149,8 +185,9 @@ class DecayEngine:
         for bucket in buckets:
             meta = bucket.get("metadata", {})
 
-            # Skip permanent buckets / 跳过固化桶
-            if meta.get("type") == "permanent":
+            # Skip permanent / pinned / protected buckets
+            # 跳过固化桶和钉选/保护桶
+            if meta.get("type") == "permanent" or meta.get("pinned") or meta.get("protected"):
                 continue
 
             checked += 1

@@ -3,7 +3,8 @@ __pycache__/
 *.pyo
 .env
 .venv/
-.claude/
+.claude/settings.local.json
+.claude/hooks/__pycache__/
 .vscode/
 config.yaml
 buckets/dynamic/
